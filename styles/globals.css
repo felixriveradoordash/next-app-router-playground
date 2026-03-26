@@ -51,6 +51,22 @@
   }
 }
 
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    min-height: 100vh;
+    color: var(--color-slate-50);
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-cyan-400) 40%, transparent);
+    color: white;
+  }
+}
+
 @keyframes rerender {
   0%,
   40% {

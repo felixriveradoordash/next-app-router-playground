@@ -188,6 +188,13 @@ const demos = [
     name: 'APIs',
     items: [
       {
+        slug: 'segmentation-workbench',
+        name: 'Segmentation Workbench',
+        nav_title: 'Segmentation',
+        description:
+          'Profile a CSV-backed audience segment and validate enrichment quality',
+      },
+      {
         slug: 'use-link-status',
         name: 'useLinkStatus',
         description: 'Create inline visual feedback for link interactions',
