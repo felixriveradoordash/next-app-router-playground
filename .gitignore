@@ -36,3 +36,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 .env*.local
+
+# Real Snowflake CSV exports (prototype sample: data/segment-nestle-sample.csv)
+/data/real-*.csv
