@@ -1,8 +1,13 @@
-import { readFile } from 'fs/promises';
-import { parse } from 'csv-parse/sync';
-import { csvSourceLabel, resolveSegmentationCsvPath } from '#/lib/read-segmentation-csv';
+import 'server-only';
 
-export type SegmentationRow = Record<string, string>;
+import {
+  buildSegmentationQuery,
+  executeSnowflakeQuery,
+  getSegmentationQuery,
+  type SnowflakeRow,
+} from '#/lib/snowflake';
+
+export type SegmentationRow = SnowflakeRow;
 
 export type SegmentationRollup = {
   label: string;
@@ -34,8 +39,8 @@ export type SegmentationSummary = {
 };
 
 export type SegmentationWorkbenchData = {
-  source: string;
-  path: string;
+  source: 'snowflake';
+  query: string;
   columns: string[];
   totalRows: number;
   previewRows: SegmentationRow[];
@@ -47,18 +52,12 @@ const UNKNOWN = 'UNKNOWN';
 export async function readSegmentationWorkbenchData(
   previewLimit = 12,
 ): Promise<SegmentationWorkbenchData> {
-  const filePath = resolveSegmentationCsvPath();
-  const raw = await readFile(filePath, 'utf8');
-  const rows = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-    relax_column_count: true,
-  }) as SegmentationRow[];
+  const query = getSegmentationQuery();
+  const rows = await executeSnowflakeQuery<SegmentationRow>(query);
 
   return {
-    source: csvSourceLabel(filePath),
-    path: filePath,
+    source: 'snowflake',
+    query,
     columns: Object.keys(rows[0] ?? {}),
     totalRows: rows.length,
     previewRows: rows.slice(0, previewLimit),
@@ -66,28 +65,37 @@ export async function readSegmentationWorkbenchData(
   };
 }
 
-export function summarizeSegmentationRows(
-  rows: SegmentationRow[],
-): SegmentationSummary {
-  const campaigns = new Set(rows.map((row) => normalizeValue(row.CAMPAIGN_ID)));
-  const brands = new Set(rows.map((row) => normalizeValue(row.L1_BRAND_NAME)));
+export async function readSegmentationRows(limit: number) {
+  const query = buildSegmentationQuery(limit);
+  return executeSnowflakeQuery<SegmentationRow>(query);
+}
+
+export function summarizeSegmentationRows(rows: SegmentationRow[]): SegmentationSummary {
+  const campaigns = new Set(rows.map((row) => normalizeValue(getValue(row, 'CAMPAIGN_ID'))));
+  const brands = new Set(rows.map((row) => normalizeValue(getValue(row, 'L1_BRAND_NAME'))));
 
   return {
     campaigns: campaigns.size,
     brands: brands.size,
-    totalUsers: rows.reduce((sum, row) => sum + toNumber(row.user_count, 1), 0),
+    totalUsers: rows.reduce((sum, row) => sum + toNumber(getValue(row, 'USER_COUNT'), 1), 0),
     uniqueConsumers: new Set(
-      rows.map((row) => normalizeValue(row.consumer_id)).filter(isKnownValue),
+      rows
+        .map((row) => normalizeValue(getValue(row, 'CONSUMER_ID')))
+        .filter(isKnownValue),
     ).size,
-    modelMatchRate: ratio(rows, (row) => toBoolean(row.GENDER_MODEL_MATCH)),
-    currentDashPassRate: ratio(rows, (row) => toBoolean(row.IS_CURRENT_DASHPASS)),
-    everDashPassRate: ratio(rows, (row) => toBoolean(row.IS_EVER_DASHPASS)),
-    knownGenderRate: ratio(rows, (row) => isKnownValue(normalizeValue(row.GENDER))),
+    modelMatchRate: ratio(rows, (row) => toBoolean(getValue(row, 'GENDER_MODEL_MATCH'))),
+    currentDashPassRate: ratio(rows, (row) =>
+      toBoolean(getValue(row, 'IS_CURRENT_DASHPASS')),
+    ),
+    everDashPassRate: ratio(rows, (row) => toBoolean(getValue(row, 'IS_EVER_DASHPASS'))),
+    knownGenderRate: ratio(rows, (row) =>
+      isKnownValue(normalizeValue(getValue(row, 'GENDER'))),
+    ),
     knownEthnicityRate: ratio(rows, (row) =>
-      isKnownValue(normalizeValue(row.ETHNICITY)),
+      isKnownValue(normalizeValue(getValue(row, 'ETHNICITY'))),
     ),
     knownChildrenRate: ratio(rows, (row) =>
-      isKnownValue(normalizeValue(row.PRESENCE_OF_CHILDREN_IND)),
+      isKnownValue(normalizeValue(getValue(row, 'PRESENCE_OF_CHILDREN_IND'))),
     ),
     topCampaigns: rollup(rows, 'CAMPAIGN_NAME'),
     topBrands: rollup(rows, 'L1_BRAND_NAME'),
@@ -97,14 +105,31 @@ export function summarizeSegmentationRows(
   };
 }
 
+export function getDisplayValue(row: SegmentationRow, key: string) {
+  const value = getValue(row, key);
+  if (value === null || typeof value === 'undefined') return '—';
+
+  const text = String(value).trim();
+  return text.length > 0 ? text : '—';
+}
+
+function getValue(row: SegmentationRow, key: string) {
+  const matchedKey = Object.keys(row).find(
+    (candidate) => candidate.toUpperCase() === key.toUpperCase(),
+  );
+
+  if (!matchedKey) return undefined;
+  return row[matchedKey];
+}
+
 function rollup(rows: SegmentationRow[], key: string, limit = 5) {
   const counts = new Map<string, SegmentationRollup>();
 
   for (const row of rows) {
-    const label = normalizeValue(row[key]);
+    const label = normalizeValue(getValue(row, key));
     const current = counts.get(label) ?? { label, rows: 0, users: 0 };
     current.rows += 1;
-    current.users += toNumber(row.user_count, 1);
+    current.users += toNumber(getValue(row, 'USER_COUNT'), 1);
     counts.set(label, current);
   }
 
@@ -115,13 +140,13 @@ function rollup(rows: SegmentationRow[], key: string, limit = 5) {
 
 function averageFillRates(rows: SegmentationRow[]) {
   const fillRateColumns = Object.keys(rows[0] ?? {}).filter((column) =>
-    column.endsWith('_fill_rate'),
+    column.toUpperCase().endsWith('_FILL_RATE'),
   );
 
   return fillRateColumns
     .map((field) => {
       const values = rows
-        .map((row) => toNumber(row[field], Number.NaN))
+        .map((row) => toNumber(getValue(row, field), Number.NaN))
         .filter((value) => Number.isFinite(value));
 
       if (!values.length) return null;
@@ -133,29 +158,30 @@ function averageFillRates(rows: SegmentationRow[]) {
     .sort((left, right) => right.rate - left.rate);
 }
 
-function ratio(
-  rows: SegmentationRow[],
-  predicate: (row: SegmentationRow) => boolean,
-) {
+function ratio(rows: SegmentationRow[], predicate: (row: SegmentationRow) => boolean) {
   if (!rows.length) return 0;
-  const matches = rows.filter(predicate).length;
-  return matches / rows.length;
+  return rows.filter(predicate).length / rows.length;
 }
 
-function normalizeValue(value: string | undefined) {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? normalized : UNKNOWN;
+function normalizeValue(value: unknown) {
+  if (value === null || typeof value === 'undefined') return UNKNOWN;
+
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : UNKNOWN;
 }
 
 function isKnownValue(value: string) {
   return value !== UNKNOWN;
 }
 
-function toBoolean(value: string | undefined) {
-  return value?.trim().toUpperCase() === 'TRUE';
+function toBoolean(value: unknown) {
+  if (typeof value === 'boolean') return value;
+  return String(value).trim().toUpperCase() === 'TRUE';
 }
 
-function toNumber(value: string | undefined, fallback: number) {
+function toNumber(value: unknown, fallback: number) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }

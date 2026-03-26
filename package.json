@@ -21,6 +21,7 @@
     "next": "16.2.0",
     "react": "19.3.0-canary-7dc903cd-20251203",
     "react-dom": "19.3.0-canary-7dc903cd-20251203",
+    "recharts": "3.8.1",
     "recma-codehike": "0.0.1",
     "remark-codehike": "0.0.1",
     "server-only": "0.0.1",
