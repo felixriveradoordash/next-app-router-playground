@@ -199,6 +199,11 @@ const demos = [
         name: 'useLinkStatus',
         description: 'Create inline visual feedback for link interactions',
       },
+      {
+        slug: 'segmentation-workbench',
+        name: 'Segmentation Workbench',
+        description: 'Query Snowflake and inspect audience segmentation rows',
+      },
     ],
   },
   {

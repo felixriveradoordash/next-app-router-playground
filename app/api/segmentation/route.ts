@@ -1,11 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
 import {
-  assertCsvReadable,
-  csvSourceLabel,
-  readSegmentationCsvRows,
-  resolveSegmentationCsvPath,
-} from '#/lib/read-segmentation-csv';
-import { summarizeSegmentationRows } from '#/lib/segmentation-workbench';
+  readSegmentationRows,
+  summarizeSegmentationRows,
+} from '#/lib/segmentation-workbench';
+import { getSegmentationQuery } from '#/lib/snowflake';
+import { NextRequest, NextResponse } from 'next/server';
 
 const DEFAULT_LIMIT = 5_000;
 const MAX_LIMIT = 50_000;
@@ -18,26 +16,12 @@ export async function GET(req: NextRequest) {
     Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_LIMIT,
   );
 
-  const filePath = resolveSegmentationCsvPath();
-
   try {
-    await assertCsvReadable(filePath);
-  } catch {
-    return NextResponse.json(
-      {
-        error: 'CSV not found',
-        path: filePath,
-        hint: 'Set SEGMENTATION_CSV_PATH in .env.local or add data/segment-nestle-sample.csv',
-      },
-      { status: 404 },
-    );
-  }
+    const rows = await readSegmentationRows(limit);
 
-  try {
-    const rows = await readSegmentationCsvRows(filePath, limit);
     return NextResponse.json({
-      source: csvSourceLabel(filePath),
-      path: filePath,
+      source: 'snowflake',
+      query: getSegmentationQuery(),
       limit,
       returned: rows.length,
       truncated: rows.length >= limit,
@@ -45,8 +29,17 @@ export async function GET(req: NextRequest) {
       summary: summarizeSegmentationRows(rows),
       rows,
     });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : 'Failed to parse CSV';
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to query Snowflake';
+
+    return NextResponse.json(
+      {
+        error: message,
+        hint:
+          'Set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER or SNOWFLAKE_USERNAME, SNOWFLAKE_PASSWORD, SNOWFLAKE_WAREHOUSE, and optionally SEGMENTATION_SNOWFLAKE_QUERY in .env.local.',
+      },
+      { status: 500 },
+    );
   }
 }

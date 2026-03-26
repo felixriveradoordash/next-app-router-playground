@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { connection } from 'next/server';
 import { Suspense } from 'react';
 import {
+  getDisplayValue,
   readSegmentationWorkbenchData,
   type SegmentationRollup,
 } from '#/lib/segmentation-workbench';
@@ -10,7 +11,7 @@ import { Boundary } from '#/ui/boundary';
 export const metadata: Metadata = {
   title: 'Segmentation Workbench',
   description:
-    'A local-first audience segmentation workbench that can be deployed to Vercel.',
+    'A Snowflake-backed audience segmentation dashboard for the Nestle analysis sample.',
 };
 
 const PREVIEW_COLUMNS = [
@@ -23,7 +24,7 @@ const PREVIEW_COLUMNS = [
   'IS_CURRENT_DASHPASS',
 ] as const;
 
-export default async function Page() {
+export default function Page() {
   return (
     <Suspense fallback={<WorkbenchSkeleton />}>
       <SegmentationContent />
@@ -37,31 +38,33 @@ async function SegmentationContent() {
 
   return (
     <Boundary
-      label={['local-first', 'vercel-ready', 'segmentation']}
+      label={['snowflake', 'segmentation', 'dashboard']}
       animateRerendering={false}
       className="flex flex-col gap-8"
     >
       <div className="flex flex-col gap-3">
         <p className="font-mono text-xs tracking-[0.24em] text-cyan-400 uppercase">
-          MarTech Value OS Prototype
+          DoorDash Ads Prototype
         </p>
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-semibold text-white">
-            Segmentation Workbench
+            Snowflake Segmentation Workbench
           </h1>
           <p className="max-w-3xl text-sm leading-6 text-gray-400">
-            A local application designed for Vercel deployment: upload or swap in
-            a segmentation CSV, inspect audience composition, and validate data
-            quality before wiring the dataset into downstream activation flows.
+            This page queries Snowflake directly and summarizes the
+            <span className="mx-1 font-mono text-gray-300">
+              PRODDB.FELIXRIVERA.NESTLE_ANALYSIS_SAMPLE
+            </span>
+            audience table for quick inspection on Vercel or locally.
           </p>
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <MetricCard
-          label="Source file"
+          label="Source"
           value={dataset.source}
-          helper={`${dataset.totalRows} rows across ${dataset.columns.length} columns`}
+          helper={`${dataset.totalRows} rows returned by query`}
         />
         <MetricCard
           label="Addressable users"
@@ -77,36 +80,22 @@ async function SegmentationContent() {
 
       <div className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
         <Boundary
-          label="Product shape"
+          label="Query"
           size="small"
           color="cyan"
           animateRerendering={false}
-          className="flex flex-col gap-4"
+          className="flex flex-col gap-3"
         >
           <p className="text-sm leading-6 text-gray-400">
-            The current prototype assumes a row-level audience export with campaign,
-            brand, identity, subscription, lifestage, and enrichment fill-rate
-            fields. That shape maps cleanly to a Vercel-hosted analyst surface:
-            CSV-backed preview, API access, and lightweight QA panels.
+            The page uses the shared server-side query below. Override it with
+            <span className="mx-1 font-mono text-gray-300">
+              SEGMENTATION_SNOWFLAKE_QUERY
+            </span>
+            if you want a narrower slice.
           </p>
-          <div className="grid gap-3 md:grid-cols-3">
-            <SchemaGroup
-              title="Activation keys"
-              fields={['CAMPAIGN_ID', 'CAMPAIGN_NAME', 'L1_BRAND_NAME']}
-            />
-            <SchemaGroup
-              title="Audience traits"
-              fields={['PREDICTED_GENDER', 'GENERATION', 'AGE_BUCKET', 'INCOME_BUCKET']}
-            />
-            <SchemaGroup
-              title="Quality signals"
-              fields={[
-                'GENDER_MODEL_MATCH',
-                'IS_CURRENT_DASHPASS',
-                'ETHNICITY_fill_rate',
-              ]}
-            />
-          </div>
+          <pre className="overflow-x-auto rounded-md border border-gray-800 bg-gray-900/70 p-3 font-mono text-xs leading-6 text-gray-300">
+            {dataset.query}
+          </pre>
         </Boundary>
 
         <Boundary
@@ -162,7 +151,7 @@ async function SegmentationContent() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1.2fr_1.8fr]">
+      <div className="grid gap-4 lg:grid-cols-[1.1fr_1.9fr]">
         <Boundary
           label="Average fill rates"
           size="small"
@@ -206,14 +195,14 @@ async function SegmentationContent() {
                 </tr>
               </thead>
               <tbody>
-                {dataset.previewRows.map((row) => (
-                  <tr key={row.consumer_id}>
+                {dataset.previewRows.map((row, index) => (
+                  <tr key={`${getDisplayValue(row, 'CONSUMER_ID')}-${index}`}>
                     {PREVIEW_COLUMNS.map((column) => (
                       <td
-                        key={`${row.consumer_id}-${column}`}
+                        key={`${index}-${column}`}
                         className="border-b border-gray-900 px-3 py-3 text-sm text-gray-300"
                       >
-                        {row[column]}
+                        {getDisplayValue(row, column)}
                       </td>
                     ))}
                   </tr>
@@ -223,24 +212,6 @@ async function SegmentationContent() {
           </div>
         </Boundary>
       </div>
-
-      <Boundary
-        label="Deployment notes"
-        size="small"
-        color="gray"
-        animateRerendering={false}
-        className="grid gap-2 text-sm leading-6 text-gray-400"
-      >
-        <p>
-          Locally, the page reads `data/segment-nestle-sample.csv` by default or
-          any absolute path passed through `SEGMENTATION_CSV_PATH`.
-        </p>
-        <p>
-          On Vercel, keep a curated sample in `data/` for a deterministic demo,
-          then swap to Blob, S3, or Snowflake-backed exports once you are ready
-          for production data retrieval.
-        </p>
-      </Boundary>
     </Boundary>
   );
 }
@@ -248,7 +219,7 @@ async function SegmentationContent() {
 function WorkbenchSkeleton() {
   return (
     <Boundary
-      label={['local-first', 'vercel-ready', 'segmentation']}
+      label={['snowflake', 'segmentation', 'dashboard']}
       animateRerendering={false}
       className="flex flex-col gap-4"
     >
@@ -258,7 +229,7 @@ function WorkbenchSkeleton() {
         <div className="h-28 animate-pulse rounded border border-gray-800 bg-gray-900/60" />
         <div className="h-28 animate-pulse rounded border border-gray-800 bg-gray-900/60" />
       </div>
-      <div className="h-80 animate-pulse rounded border border-gray-800 bg-gray-900/60" />
+      <div className="h-96 animate-pulse rounded border border-gray-800 bg-gray-900/60" />
     </Boundary>
   );
 }
@@ -282,24 +253,6 @@ function MetricCard({
       <div className="text-lg font-semibold text-white">{value}</div>
       <p className="text-sm text-gray-500">{helper}</p>
     </Boundary>
-  );
-}
-
-function SchemaGroup({ title, fields }: { title: string; fields: string[] }) {
-  return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-3">
-      <h2 className="mb-2 text-sm font-semibold text-white">{title}</h2>
-      <div className="flex flex-wrap gap-2">
-        {fields.map((field) => (
-          <span
-            key={field}
-            className="rounded-full border border-gray-700 px-2.5 py-1 font-mono text-[11px] tracking-wide text-gray-300 uppercase"
-          >
-            {field}
-          </span>
-        ))}
-      </div>
-    </div>
   );
 }
 
